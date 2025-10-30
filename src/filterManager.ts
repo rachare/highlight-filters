@@ -8,6 +8,69 @@ export function getFilterGroups(): FilterGroup[] {
   return config.get<FilterGroup[]>('groups') || [];
 }
 
+export function getMatchCounts(document: vscode.TextDocument, groups: FilterGroup[], isFilteredView: boolean = false): Map<string, number> {
+  const matchCounts = new Map<string, number>();
+  
+  // Get active range from configuration
+  const config = vscode.workspace.getConfiguration('highlightFilters');
+  let startLine = 0;
+  let endLine = document.lineCount - 1;
+
+  if (!isFilteredView) {
+    const activeRangeId = config.get<string>('activeRangeId', 'default');
+    if (activeRangeId !== 'default') {
+      const ranges = config.get<{ id: string, start: number, end: number }[]>('ranges', []);
+      const activeRange = ranges.find(range => range.id === activeRangeId);
+      if (activeRange) {
+        startLine = Math.max(0, activeRange.start);
+        endLine = activeRange.end >= 0 ? Math.min(document.lineCount - 1, activeRange.end) : document.lineCount - 1;
+      }
+    }
+  }
+
+  for (const group of groups) {
+    if (!group.enabled) continue;
+    for (const filter of group.filters) {
+      if (!filter.enabled) continue;
+
+      let filterMatchCount = 0;
+      for (let i = startLine; i <= endLine; i++) {
+        const line = document.lineAt(i);
+        let lineText = line.text;
+
+        // If line begins with NNN: , treat that as filtered view prefix
+        const matchNumPrefix = lineText.match(/^(\d+):\s?/);
+        if (matchNumPrefix) {
+          lineText = lineText.substring(matchNumPrefix[0].length);
+        }
+
+        const lineToSearch = filter.caseSensitive ? lineText : lineText.toLowerCase();
+        const patternToSearch = filter.caseSensitive ? filter.pattern : filter.pattern.toLowerCase();
+
+        const regex = filter.regex ? new RegExp(patternToSearch, 'g') : undefined;
+
+        let lineHasMatch = false;
+        if (filter.regex && regex) {
+          if (regex.test(lineToSearch)) {
+            lineHasMatch = true;
+          }
+        } else if (!filter.regex) {
+          if (lineToSearch.includes(patternToSearch)) {
+            lineHasMatch = true;
+          }
+        }
+        
+        if (lineHasMatch) {
+          filterMatchCount++;
+        }
+      }
+      matchCounts.set(filter.id, filterMatchCount);
+    }
+  }
+
+  return matchCounts;
+}
+
 export function applyHighlights(document: vscode.TextDocument, groups: FilterGroup[], isFilteredView: boolean = false): Map<string, number> {
   const editor = vscode.window.activeTextEditor;
   const matchCounts = new Map<string, number>();
@@ -73,13 +136,14 @@ export function applyHighlights(document: vscode.TextDocument, groups: FilterGro
 
         const regex = filter.regex ? new RegExp(patternToSearch, 'g') : undefined; // 'g' for multiple matches
 
+        let lineHasMatch = false;
         if (filter.regex && regex) {
           let match;
           while ((match = regex.exec(lineToSearch)) !== null) {
             const startPos = line.range.start.translate(0, prefixLen + match.index);
             const endPos = line.range.start.translate(0, prefixLen + match.index + match[0].length);
             newDecorations.get(decorationKey)?.push(new vscode.Range(startPos, endPos));
-            filterMatchCount++;
+            lineHasMatch = true;
           }
         } else if (!filter.regex) {
           // If not regex, find all occurrences of the pattern
@@ -89,8 +153,13 @@ export function applyHighlights(document: vscode.TextDocument, groups: FilterGro
             const endPos = line.range.start.translate(0, prefixLen + startIndex + patternToSearch.length);
             newDecorations.get(decorationKey)?.push(new vscode.Range(startPos, endPos));
             startIndex += patternToSearch.length;
-            filterMatchCount++;
+            lineHasMatch = true;
           }
+        }
+        
+        // Count lines, not individual matches
+        if (lineHasMatch) {
+          filterMatchCount++;
         }
       }
       matchCounts.set(filter.id, filterMatchCount);
