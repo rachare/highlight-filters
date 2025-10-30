@@ -80,6 +80,14 @@
         "title": "Highlight Filters: Toggle Matched Lines View"
       }
     ],
+    "menus": {
+      "editor/title/context": [
+        {
+          "command": "highlight-filters.toggleMatchedLinesView",
+          "group": "navigation"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "highlight-filters.toggleMatchedLinesView",

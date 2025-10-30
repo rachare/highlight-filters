@@ -568,8 +568,6 @@ export function getHtml(
           groupsContainer.addEventListener('click', e => {
               const target = e.target;
               const groupHeader = target.closest('.group-header');
-              console.log(target);
-              console.log('Hello');
               if (groupHeader && (target.closest('.group-twistie'))) {
                   const groupName = groupHeader.closest('.filter-group').dataset.groupName;
                   if (expandedGroups.has(groupName)) {

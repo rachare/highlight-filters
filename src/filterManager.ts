@@ -8,13 +8,36 @@ export function getFilterGroups(): FilterGroup[] {
   return config.get<FilterGroup[]>('groups') || [];
 }
 
+// Precompile regex patterns for better performance
+export function precompileFilters(groups: FilterGroup[]): void {
+  for (const group of groups) {
+    for (const filter of group.filters) {
+      if (filter.regex) {
+        try {
+          const patternToCompile = filter.caseSensitive ? filter.pattern : filter.pattern.toLowerCase();
+          (filter as any).compiledRegex = new RegExp(patternToCompile, 'g');
+        } catch (e) {
+          // Invalid regex, will fall back to runtime compilation
+          (filter as any).compiledRegex = null;
+        }
+      } else {
+        (filter as any).compiledRegex = null;
+      }
+    }
+  }
+}
+
 export function getMatchCounts(document: vscode.TextDocument, groups: FilterGroup[], isFilteredView: boolean = false): Map<string, number> {
   const matchCounts = new Map<string, number>();
   
+  if (!document || !groups) {
+    return matchCounts;
+  }
+
   // Get active range from configuration
   const config = vscode.workspace.getConfiguration('highlightFilters');
   let startLine = 0;
-  let endLine = document.lineCount - 1;
+  let endLine = Math.max(0, document.lineCount - 1);
 
   if (!isFilteredView) {
     const activeRangeId = config.get<string>('activeRangeId', 'default');
@@ -29,40 +52,49 @@ export function getMatchCounts(document: vscode.TextDocument, groups: FilterGrou
   }
 
   for (const group of groups) {
-    if (!group.enabled) continue;
+    if (!group || !group.enabled) continue;
     for (const filter of group.filters) {
-      if (!filter.enabled) continue;
+      if (!filter || !filter.enabled || !filter.pattern) continue;
 
       let filterMatchCount = 0;
-      for (let i = startLine; i <= endLine; i++) {
-        const line = document.lineAt(i);
-        let lineText = line.text;
+      try {
+        for (let i = startLine; i <= endLine; i++) {
+          try {
+            const line = document.lineAt(i);
+            if (!line) continue;
+            
+            let lineText = line.text || '';
 
-        // If line begins with NNN: , treat that as filtered view prefix
-        const matchNumPrefix = lineText.match(/^(\d+):\s?/);
-        if (matchNumPrefix) {
-          lineText = lineText.substring(matchNumPrefix[0].length);
-        }
+            // If line begins with NNN: , treat that as filtered view prefix
+            const matchNumPrefix = lineText.match(/^(\d+):\s?/);
+            if (matchNumPrefix) {
+              lineText = lineText.substring(matchNumPrefix[0].length);
+            }
 
-        const lineToSearch = filter.caseSensitive ? lineText : lineText.toLowerCase();
-        const patternToSearch = filter.caseSensitive ? filter.pattern : filter.pattern.toLowerCase();
+            const lineToSearch = filter.caseSensitive ? lineText : lineText.toLowerCase();
+            const patternToSearch = filter.caseSensitive ? filter.pattern : filter.pattern.toLowerCase();
 
-        const regex = filter.regex ? new RegExp(patternToSearch, 'g') : undefined;
-
-        let lineHasMatch = false;
-        if (filter.regex && regex) {
-          if (regex.test(lineToSearch)) {
-            lineHasMatch = true;
+            let lineHasMatch = false;
+            if (filter.regex) {
+              // Use precompiled regex if available
+              const regex = (filter as any).compiledRegex || new RegExp(patternToSearch, 'g');
+              if (regex.test(lineToSearch)) {
+                lineHasMatch = true;
+              }
+            } else if (lineToSearch.includes(patternToSearch)) {
+              lineHasMatch = true;
+            }
+            
+            if (lineHasMatch) {
+              filterMatchCount++;
+            }
+          } catch (lineError) {
+            // Skip problematic lines
+            continue;
           }
-        } else if (!filter.regex) {
-          if (lineToSearch.includes(patternToSearch)) {
-            lineHasMatch = true;
-          }
         }
-        
-        if (lineHasMatch) {
-          filterMatchCount++;
-        }
+      } catch (error) {
+        console.error('Error counting matches for filter:', filter.id, error);
       }
       matchCounts.set(filter.id, filterMatchCount);
     }
@@ -74,12 +106,12 @@ export function getMatchCounts(document: vscode.TextDocument, groups: FilterGrou
 export function applyHighlights(document: vscode.TextDocument, groups: FilterGroup[], isFilteredView: boolean = false): Map<string, number> {
   const editor = vscode.window.activeTextEditor;
   const matchCounts = new Map<string, number>();
-  if (!editor || editor.document !== document) return matchCounts;
+  if (!editor || editor.document !== document || !document || !groups) return matchCounts;
 
   // Get active range from configuration
   const config = vscode.workspace.getConfiguration('highlightFilters');
   let startLine = 0;
-  let endLine = document.lineCount - 1;
+  let endLine = Math.max(0, document.lineCount - 1);
 
   if (!isFilteredView) {
     const activeRangeId = config.get<string>('activeRangeId', 'default');
