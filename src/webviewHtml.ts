@@ -85,10 +85,10 @@ export function getHtml(
           display: flex;
           flex-direction: row;
           align-items: center;
-          padding: 4px 8px; /* Increased padding */
+          padding: 2px 6px;
           border-bottom: 1px solid var(--vscode-input-border);
           background: var(--vscode-input-background);
-          gap: 4px; /* Increased gap */
+          gap: 3px;
         }
         
         .filter-input-row:last-child {
@@ -100,9 +100,9 @@ export function getHtml(
         }
         
         .filter-color-input {
-          width: 20px;
-          height: 20px;
-          border-radius: 4px; /* Increased border radius */
+          width: 16px;
+          height: 16px;
+          border-radius: 100%;
           cursor: pointer;
           border: 1px solid var(--vscode-input-border);
           flex-shrink: 0;
@@ -117,6 +117,28 @@ export function getHtml(
         .filter-color-input::-webkit-color-swatch {
           border: none;
           border-radius: 1px;
+        }
+        
+        .color-clear-btn {
+          width: 14px;
+          height: 14px;
+          padding: 0;
+          background: none;
+          border: none;
+          color: var(--vscode-icon-foreground);
+          cursor: pointer;
+          font-size: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          opacity: 0.6;
+          flex-shrink: 0;
+        }
+        
+        .color-clear-btn:hover {
+          opacity: 1;
+          background: var(--vscode-toolbar-hoverBackground);
+          border-radius: 2px;
         }
         
         .filter-input {
@@ -139,7 +161,7 @@ export function getHtml(
           display: flex;
           flex-direction: row;
           align-items: center;
-          gap: 4px; /* Increased gap */
+          gap: 2px;
           flex-shrink: 0;
         }
         
@@ -148,13 +170,17 @@ export function getHtml(
           border: 1px solid var(--vscode-button-border);
           color: var(--vscode-button-foreground);
           cursor: pointer;
-          padding: 4px 6px; /* Increased padding */
-          border-radius: 4px; /* Increased border radius */
+          padding: 2px 4px;
+          border-radius: 2px;
           font-size: 11px;
           line-height: 1;
-          min-width: 24px;
+          min-width: 20px;
+          height: 20px;
           flex-shrink: 0;
           white-space: nowrap;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
         
         .filter-toggle.active {
@@ -164,6 +190,45 @@ export function getHtml(
         
         .filter-toggle:hover {
           background: var(--vscode-button-hoverBackground);
+        }
+        
+        .range-selector {
+          margin-left: 4px;
+          padding: 3px 6px;
+          border-radius: 3px;
+          border: 1px solid var(--vscode-input-border);
+          background: var(--vscode-dropdown-background);
+          color: var(--vscode-dropdown-foreground);
+          font-size: 12px;
+          cursor: pointer;
+          outline: none;
+        }
+        
+        .range-selector:hover {
+          background: var(--vscode-dropdown-listBackground);
+        }
+        
+        .range-selector:focus {
+          border-color: var(--vscode-focusBorder);
+        }
+        
+        .range-input {
+          margin-left: 4px;
+          padding: 3px 6px;
+          border-radius: 3px;
+          border: 1px solid var(--vscode-input-border);
+          background: var(--vscode-input-background);
+          color: var(--vscode-input-foreground);
+          font-size: 12px;
+          outline: none;
+        }
+        
+        .range-input:focus {
+          border-color: var(--vscode-focusBorder);
+        }
+        
+        .range-input::placeholder {
+          color: var(--vscode-input-placeholderForeground);
         }
         
         .filter-delete {
@@ -289,9 +354,9 @@ export function getHtml(
       <div class="search-container">
         <div class="search-header">
           <div class="search-title">Highlight Filters</div>
-          <select id="range-selector" class="range-selector" style="margin-left: 8px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-foreground);"></select>
-          <input type="number" id="range-start" class="range-input" placeholder="Start" style="margin-left: 8px; width: 90px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-foreground);" />
-          <input type="number" id="range-end" class="range-input" placeholder="End (-1 for EOF)" style="margin-left: 4px; width: 130px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-foreground);" />
+          <select id="range-selector" class="range-selector"></select>
+          <input type="number" id="range-start" class="range-input" placeholder="Start" style="width: 20px;" />
+          <input type="number" id="range-end" class="range-input" placeholder="End" style="width: 20px;" />
           <button class="search-btn codicon codicon-save" id="save-range-btn" title="Save Range"></button>
           <button class="search-btn codicon codicon-close" id="delete-range-btn" title="Delete Selected Range"></button>
           <div class="search-actions" id="search-actions">
