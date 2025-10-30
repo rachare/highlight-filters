@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { applyHighlights, getFilterGroups } from './filterManager';
+import { HighlightFilteredDocumentProvider } from './filteredDocumentProvider';
 import { FilterGroup, Filter } from './types';
 
 const originalDocumentContent = new Map<string, string>();
@@ -32,6 +33,13 @@ export function activate(context: vscode.ExtensionContext) {
     config.update('groups', defaultGroups, vscode.ConfigurationTarget.Global);
   }
 
+  const filteredProvider = new HighlightFilteredDocumentProvider(context);
+  context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider(HighlightFilteredDocumentProvider.scheme, filteredProvider)
+  );
+
+  const matchedViewActive = new Map<string, boolean>();
+
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       'filterPanel',
@@ -42,8 +50,12 @@ export function activate(context: vscode.ExtensionContext) {
   // Register the command to toggle matched lines view
   context.subscriptions.push(vscode.commands.registerCommand('highlight-filters.toggleMatchedLinesView', async () => {
     const config = vscode.workspace.getConfiguration('highlightFilters');
-    const matchedLinesViewEnabled = config.get<boolean>('matchedLinesViewEnabled') || false;
     const activeEditor = vscode.window.activeTextEditor;
+    const activeUri = activeEditor?.document.uri;
+    const isFilteredDoc = activeUri?.scheme === HighlightFilteredDocumentProvider.scheme;
+    const originalUri = isFilteredDoc ? vscode.Uri.parse(activeUri!.query) : activeUri!;
+    const originalUriStr = originalUri.toString();
+    const matchedLinesViewEnabled = matchedViewActive.get(originalUriStr) === true;
 
     if (!activeEditor) {
       vscode.window.showInformationMessage('No active editor to apply filter to.');
@@ -51,19 +63,29 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     const document = activeEditor.document;
-    const docUri = document.uri.toString();
 
     if (!matchedLinesViewEnabled) {
-      // Store original content
-      originalDocumentContent.set(docUri, document.getText());
+      // Local toggle: copy original content and show filtered lines in-place (without saving)
+      const doc = activeEditor.document;
+      const docUriStr = originalUriStr;
 
-      // Get filters/groups
+      // Store original content if not already stored
+      if (!originalDocumentContent.has(docUriStr)) {
+        originalDocumentContent.set(docUriStr, doc.getText());
+      }
+
+      // Build matched lines within active range and groups
       const groups = getFilterGroups();
-      let matchedLines: string[] = [];
+      const cfg = vscode.workspace.getConfiguration('highlightFilters');
+      const activeRangeId = cfg.get<string>('activeRangeId', 'default');
+      const ranges = cfg.get<{ id: string, start: number, end: number }[]>('ranges', []);
+      const activeRange = ranges.find(r => r.id === activeRangeId) || { start: 0, end: -1 };
+      const startLine = Math.max(0, activeRange.start);
+      const endLine = activeRange.end >= 0 ? Math.min(doc.lineCount - 1, activeRange.end) : doc.lineCount - 1;
 
-      // Filter lines
-      for (let i = 0; i < document.lineCount; i++) {
-        const line = document.lineAt(i).text;
+      const matchedLines: string[] = [];
+      for (let i = startLine; i <= endLine; i++) {
+        const line = doc.lineAt(i).text;
         let isMatched = false;
 
         for (const group of groups) {
@@ -72,7 +94,6 @@ export function activate(context: vscode.ExtensionContext) {
             if (!filter.enabled) continue;
             const lineToSearch = filter.caseSensitive ? line : line.toLowerCase();
             const patternToSearch = filter.caseSensitive ? filter.pattern : filter.pattern.toLowerCase();
-
             const pattern = filter.regex ? new RegExp(patternToSearch) : patternToSearch;
             if ((filter.regex && (pattern as RegExp).test(lineToSearch)) || (!filter.regex && lineToSearch.includes(patternToSearch as string))) {
               isMatched = true;
@@ -88,41 +109,40 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      // Replace editor content with only matched lines
+      // Replace visible content with matched lines only (in-memory, not saved)
       await activeEditor.edit(editBuilder => {
         const wholeRange = new vscode.Range(
-          document.positionAt(0),
-          document.positionAt(document.getText().length)
+          doc.positionAt(0),
+          doc.positionAt(doc.getText().length)
         );
         editBuilder.replace(wholeRange, matchedLines.join('\n'));
       });
 
-      await config.update('matchedLinesViewEnabled', true, vscode.ConfigurationTarget.Global);
+      matchedViewActive.set(originalUriStr, true);
 
-      // Optionally apply styling decorations here if needed
-      const groupsNew = config.get<FilterGroup[]>('groups') || [];
-      applyHighlights(activeEditor.document, groupsNew);
+      // Re-apply highlights on the now-filtered buffer
+      applyHighlights(activeEditor.document, groups, true);
 
     } else {
-      // Restore original content if stored
-      if (originalDocumentContent.has(docUri)) {
+      // Restore original content exactly as it was
+      matchedViewActive.delete(originalUriStr);
+
+      const originalText = originalDocumentContent.get(originalUriStr);
+      if (originalText !== undefined) {
         await activeEditor.edit(editBuilder => {
+          const doc = activeEditor.document;
           const wholeRange = new vscode.Range(
-            document.positionAt(0),
-            document.positionAt(document.getText().length)
+            doc.positionAt(0),
+            doc.positionAt(doc.getText().length)
           );
-          editBuilder.replace(wholeRange, originalDocumentContent.get(docUri)!);
+          editBuilder.replace(wholeRange, originalText);
         });
-        originalDocumentContent.delete(docUri);
-
-        await config.update('matchedLinesViewEnabled', false, vscode.ConfigurationTarget.Global);
-
-        // Optionally re-apply decorations
-        const groupsOld = config.get<FilterGroup[]>('groups') || [];
-        applyHighlights(activeEditor.document, groupsOld);
-      } else {
-        vscode.window.showInformationMessage('No original document content saved to restore.');
+        originalDocumentContent.delete(originalUriStr);
       }
+
+      // Re-apply highlights to restored content
+      const groupsOld = vscode.workspace.getConfiguration('highlightFilters').get<FilterGroup[]>('groups') || [];
+      applyHighlights(activeEditor.document, groupsOld, false);
     }
   }));
 
@@ -134,6 +154,12 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   vscode.workspace.onDidOpenTextDocument(document => {
+    // Reset local matched view state for newly opened files
+    const docUriStr = document.uri.toString();
+    if (typeof matchedViewActive !== 'undefined') {
+      matchedViewActive.delete(docUriStr);
+    }
+
     const config = vscode.workspace.getConfiguration('highlightFilters');
     const groups = config.get<FilterGroup[]>('groups') || [];
     applyHighlights(document, groups);
@@ -270,7 +296,7 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
         case 'deleteGroup':
           {
             const { groupName } = message.payload;
-            vscode.window.showInformationMessage(`Delete group "${groupName}" and all its filters?`, { modal: true }, "Delete")
+            vscode.window.showInformationMessage(`Delete group "\${groupName}" and all its filters?`, { modal: true }, "Delete")
               .then(selection => {
                 if (selection === "Delete") {
                   let currentGroups = config.get<FilterGroup[]>('groups') || [];
@@ -342,6 +368,101 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
             }
           }
           break;
+        case 'updateActiveRange':
+          {
+            const { activeRangeId } = message.payload;
+            await config.update('activeRangeId', activeRangeId, vscode.ConfigurationTarget.Global);
+            
+            // Re-apply highlights with the new range
+            if (vscode.window.activeTextEditor) {
+              const currentGroups = config.get<FilterGroup[]>('groups') || [];
+              applyHighlights(vscode.window.activeTextEditor.document, currentGroups);
+            }
+    
+            // Update the webview with the latest config
+            this.updateWebview(groups);
+          }
+          break;
+        case 'addRange':
+          {
+            const { start, end } = message.payload as { start: number, end: number };
+            const rangeStart = Math.max(0, typeof start === 'number' ? start : 0);
+            const rangeEnd = typeof end === 'number' ? end : -1;
+
+            const rangeName = await vscode.window.showInputBox({
+              prompt: 'Enter a name for this range',
+              placeHolder: 'e.g. Section A',
+              ignoreFocusOut: true,
+            });
+
+            if (!rangeName || rangeName.trim() === '') {
+              vscode.window.showInformationMessage('Range not saved: name is required.');
+              break;
+            }
+
+            const newRange = {
+              id: 'range-' + Math.random().toString(36).substr(2, 9),
+              name: rangeName.trim(),
+              start: rangeStart,
+              end: rangeEnd,
+            };
+
+            const existingRanges = vscode.workspace.getConfiguration('highlightFilters').get<{ id: string, name: string, start: number, end: number }[]>('ranges', []);
+            const updatedRanges = [...existingRanges, newRange];
+
+            await vscode.workspace.getConfiguration('highlightFilters').update('ranges', updatedRanges, vscode.ConfigurationTarget.Global);
+            await vscode.workspace.getConfiguration('highlightFilters').update('activeRangeId', newRange.id, vscode.ConfigurationTarget.Global);
+
+            const latestGroups = vscode.workspace.getConfiguration('highlightFilters').get<FilterGroup[]>('groups') || [];
+            this.updateWebview(latestGroups);
+            if (vscode.window.activeTextEditor) {
+              applyHighlights(vscode.window.activeTextEditor.document, latestGroups);
+            }
+          }
+          break;
+        case 'deleteRange':
+            {
+                const { rangeId } = message.payload as { rangeId: string };
+                const cfg = vscode.workspace.getConfiguration('highlightFilters');
+                const ranges = cfg.get<{ id: string, name: string, start: number, end: number }[]>('ranges', []);
+                const activeRangeId = cfg.get<string>('activeRangeId', 'default');
+    
+                if (rangeId === 'default') {
+                  vscode.window.showInformationMessage('Default range cannot be deleted.');
+                  break;
+                }
+    
+                const target = ranges.find(r => r.id === rangeId);
+                if (!target) {
+                  vscode.window.showInformationMessage('Selected range not found.');
+                  break;
+                }
+    
+                if (activeRangeId === rangeId) {
+                  const choice = await vscode.window.showWarningMessage(
+                    `Delete active range "\${target.name}" and switch back to Default range?`,
+                    { modal: true },
+                    'Delete'
+                  );
+                  if (choice !== 'Delete') {
+                    break;
+                  }
+                }
+    
+                const updated = ranges.filter(r => r.id !== rangeId);
+                await cfg.update('ranges', updated, vscode.ConfigurationTarget.Global);
+    
+                if (activeRangeId === rangeId) {
+                  await cfg.update('activeRangeId', 'default', vscode.ConfigurationTarget.Global);
+                }
+    
+                const latestGroups = cfg.get<FilterGroup[]>('groups') || [];
+                this.updateWebview(latestGroups);
+                if (vscode.window.activeTextEditor) {
+                  applyHighlights(vscode.window.activeTextEditor.document, latestGroups);
+                }
+              }
+              break;
         case 'refreshView':
           {
             const latestGroups = vscode.workspace.getConfiguration('highlightFilters').get<FilterGroup[]>('groups') || [];
@@ -398,7 +519,10 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
   }
 
   updateWebview(groups: FilterGroup[]) {
-    this._view?.webview.postMessage({ command: 'update', groups });
+    const config = vscode.workspace.getConfiguration('highlightFilters');
+    const ranges = config.get<{ id: string, start: number, end: number }[]>('ranges', []);
+    const activeRangeId = config.get<string>('activeRangeId', 'default');
+    this._view?.webview.postMessage({ command: 'update', groups, ranges, activeRangeId });
   }
 
   private getHtml(): string {
@@ -687,6 +811,11 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
         <div class="search-container">
           <div class="search-header">
             <div class="search-title">Highlight Filters</div>
+            <select id="range-selector" class="range-selector" style="margin-left: 8px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-foreground);"></select>
+            <input type="number" id="range-start" class="range-input" placeholder="Start" style="margin-left: 8px; width: 90px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-foreground);" />
+            <input type="number" id="range-end" class="range-input" placeholder="End (-1 for EOF)" style="margin-left: 4px; width: 130px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-foreground);" />
+            <button class="search-btn codicon codicon-save" id="save-range-btn" title="Save Range"></button>
+            <button class="search-btn codicon codicon-close" id="delete-range-btn" title="Delete Selected Range"></button>
             <div class="search-actions" id="search-actions">
               <button class="search-btn" id="export-btn" title="Export Configuration"></button>
               <button class="search-btn" id="import-btn" title="Import Configuration"></button>
@@ -711,6 +840,10 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
           const hiddenColorInput = document.getElementById('hidden-color-input');
           let currentColorTarget = null;
           let expandedGroups = new Set();
+          // Globals used by webview for ranges and active range tracking
+          let groups = [];
+          let ranges = [];
+          let activeRangeId = 'default';
           
           // Helper function to convert $(icon-name) syntax to codicon class
           // This function is no longer used for direct element content, but can be useful for debugging or future changes.
@@ -729,6 +862,8 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
             
             let totalFilters = 0;
             let activeFilters = 0;
+            
+            if (expandedGroups.size === 0) { groups.forEach(g => expandedGroups.add(g.name)); }
             
             groups.forEach(group => {
               const groupDiv = document.createElement('div');
@@ -783,7 +918,7 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
                     <button class="filter-toggle toggle-case-sensitive \${filter.caseSensitive ? 'active' : ''} codicon codicon-case-sensitive" data-filter-id="\${filter.id}" title="Toggle Case Sensitivity"></button>
                     <button class="filter-toggle toggle-regex \${filter.regex ? 'active' : ''} codicon codicon-regex" data-filter-id="\${filter.id}" title="Toggle Regex"></button>
                     <button class="filter-toggle toggle-filter \${filter.enabled ? 'active' : ''} codicon \${filter.enabled ? 'codicon-circle-filled' : 'codicon-circle-outline'}" data-filter-id="\${filter.id}" title="\${filter.enabled ? 'Disable' : 'Enable'}"></button>
-                    <button class="filter-delete delete-filter codicon codicon-close" data-filter-id="\${filter.id}" title="Delete Filter"></button>
+                  <button class="filter-delete delete-filter codicon codicon-close" data-filter-id="\${filter.id}" title="Delete Filter"></button>
                   </div>
                 \`;
                 
@@ -811,6 +946,77 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
             document.getElementById('collapse-all-btn').classList.add('codicon', 'codicon-collapse-all');
             document.getElementById('expand-all-btn').classList.add('codicon', 'codicon-expand-all');
             
+            // Add range selector population
+            function updateRangeSelector(ranges, activeRangeId) {
+              const selector = document.getElementById('range-selector');
+              selector.innerHTML = '';
+              
+              // Add default range option
+              const defaultOption = document.createElement('option');
+              defaultOption.value = 'default';
+              defaultOption.textContent = 'Default Range (0 to end)';
+              defaultOption.selected = activeRangeId === 'default';
+              selector.appendChild(defaultOption);
+              
+              // Add custom ranges
+              ranges.forEach(range => {
+                const option = document.createElement('option');
+                option.value = range.id;
+                option.textContent = \`\${range.name} (\${range.start} to \${range.end >= 0 ? range.end : 'end'})\`;
+                option.selected = activeRangeId === range.id;
+                selector.appendChild(option);
+              });
+
+              // Reflect active range into inputs
+              const startEl = document.getElementById('range-start');
+              const endEl = document.getElementById('range-end');
+              const active = activeRangeId === 'default' ? { start: 0, end: -1 } : ranges.find(r => r.id === activeRangeId);
+              if (startEl) startEl.value = String(active ? active.start : 0);
+              if (endEl) endEl.value = String(active ? active.end : -1);
+            }
+            
+            const rangeSelector = document.getElementById('range-selector');
+            if (rangeSelector) {
+              rangeSelector.addEventListener('change', e => {
+                vscode.postMessage({ 
+                  command: 'updateActiveRange', 
+                  payload: { activeRangeId: e.target.value } 
+                });
+              });
+            }
+
+            const saveRangeBtn = document.getElementById('save-range-btn');
+            if (saveRangeBtn) {
+              saveRangeBtn.addEventListener('click', () => {
+              const startEl = document.getElementById('range-start');
+              const endEl = document.getElementById('range-end');
+                const start = startEl ? parseInt(startEl.value || '0', 10) : 0;
+                const end = endEl ? parseInt(endEl.value || '-1', 10) : -1;
+
+                // Validate inputs: end == -1 (EOF) or end >= start
+                if (Number.isNaN(start) || Number.isNaN(end)) {
+                  return;
+                }
+                if (end !== -1 && end < start) {
+                  return;
+                }
+
+                vscode.postMessage({
+                  command: 'addRange',
+                  payload: { start, end }
+                });
+              });
+            }
+
+            const deleteRangeBtn = document.getElementById('delete-range-btn');
+            if (deleteRangeBtn) {
+              deleteRangeBtn.addEventListener('click', () => {
+                const selector = document.getElementById('range-selector');
+                const selectedId = selector ? selector.value : 'default';
+                vscode.postMessage({ command: 'deleteRange', payload: { rangeId: selectedId } });
+              });
+            }
+            
             groupsContainer.addEventListener('click', e => {
                 const target = e.target;
                 const groupHeader = target.closest('.group-header');
@@ -829,7 +1035,7 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
                     return;
                 }
 
-                const actionTarget = target.closest('.add-filter, .toggle-group, .delete-group, .filter-color-indicator, .color-clear-btn, .toggle-bold, .toggle-italic, .toggle-case-sensitive, .toggle-wholeline, .toggle-regex, .toggle-filter, .delete-filter, .add-group-prompt');
+                const actionTarget = target.closest('.add-filter, .toggle-group, .delete-group, .filter-color-input, .color-clear-btn, .toggle-bold, .toggle-italic, .toggle-case-sensitive, .toggle-wholeline, .toggle-regex, .toggle-filter, .delete-filter, .add-group-prompt');
                 if (!actionTarget) return;
 
                 if (actionTarget.matches('.add-group-prompt')) {
@@ -845,7 +1051,7 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
                 if (actionTarget.matches('.delete-group')) {
                     vscode.postMessage({ command: 'deleteGroup', payload: { groupName: actionTarget.dataset.groupName } });
                 }
-                if (actionTarget.matches('.filter-color-indicator')) {
+                if (actionTarget.matches('.filter-color-input')) {
                     currentColorTarget = { filterId: actionTarget.dataset.filterId, colorType: actionTarget.dataset.colorType };
                     // Get the current color value and set it in the color picker
                     const filterRow = actionTarget.closest('.filter-input-row');
@@ -895,7 +1101,6 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
                 const filterId = e.target.dataset.filterId;
                 const colorType = e.target.dataset.colorType;
                 let colorValue = e.target.value;
-                // Convert 6-digit hex to 8-digit hex with full opacity
                 if (colorValue.length === 7) {
                   colorValue = colorValue + 'ff';
                 }
@@ -982,29 +1187,44 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
               }
             });
 
-            document.getElementById('add-group-btn').addEventListener('click', () => {
-              vscode.postMessage({ command: 'addGroup' });
-            });
-          
-            document.getElementById('expand-all-btn').addEventListener('click', () => {
-              document.querySelectorAll('.filter-group').forEach(group => {
-                expandedGroups.add(group.dataset.groupName);
+            const addGroupBtn = document.getElementById('add-group-btn');
+            if (addGroupBtn) {
+              addGroupBtn.addEventListener('click', () => {
+                vscode.postMessage({ command: 'addGroup' });
               });
-              vscode.postMessage({ command: 'refreshView' });
-            });
+            }
+          
+            const expandAllBtn = document.getElementById('expand-all-btn');
+            if (expandAllBtn) {
+              expandAllBtn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-group').forEach(group => {
+                  expandedGroups.add(group.dataset.groupName);
+                });
+                vscode.postMessage({ command: 'refreshView' });
+              });
+            }
             
-            document.getElementById('collapse-all-btn').addEventListener('click', () => {
-              expandedGroups.clear();
-              vscode.postMessage({ command: 'refreshView' });
-            });
+            const collapseAllBtn = document.getElementById('collapse-all-btn');
+            if (collapseAllBtn) {
+              collapseAllBtn.addEventListener('click', () => {
+                expandedGroups.clear();
+                vscode.postMessage({ command: 'refreshView' });
+              });
+            }
             
-            document.getElementById('export-btn').addEventListener('click', () => {
-              vscode.postMessage({ command: 'exportConfig' });
-            });
+            const exportBtn = document.getElementById('export-btn');
+            if (exportBtn) {
+              exportBtn.addEventListener('click', () => {
+                vscode.postMessage({ command: 'exportConfig' });
+              });
+            }
             
-            document.getElementById('import-btn').addEventListener('click', () => {
-              vscode.postMessage({ command: 'importConfig' });
-            });
+            const importBtn = document.getElementById('import-btn');
+            if (importBtn) {
+              importBtn.addEventListener('click', () => {
+                vscode.postMessage({ command: 'importConfig' });
+              });
+            }
             
             hiddenColorInput.addEventListener('change', e => {
               if (currentColorTarget) {
@@ -1025,11 +1245,17 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
               }
             });
 
+            // Initialize range selector
+            updateRangeSelector([], 'default');
+            
             window.addEventListener('message', event => {
               const message = event.data;
               if (message.command === 'update') {
-                render(message.groups);
-                groups = message.groups; // sync local memory with remote config model!
+                groups = message.groups;
+                ranges = message.ranges;
+                activeRangeId = message.activeRangeId;
+                render(groups); // Call render after assigning global groups
+                updateRangeSelector(ranges, activeRangeId);
               }
             });
             

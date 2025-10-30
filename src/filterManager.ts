@@ -8,9 +8,29 @@ export function getFilterGroups(): FilterGroup[] {
   return config.get<FilterGroup[]>('groups') || [];
 }
 
-export function applyHighlights(document: vscode.TextDocument, groups: FilterGroup[]) {
+export function applyHighlights(document: vscode.TextDocument, groups: FilterGroup[], isFilteredView: boolean = false): Map<string, number> {
   const editor = vscode.window.activeTextEditor;
-  if (!editor || editor.document !== document) return;
+  const matchCounts = new Map<string, number>();
+  if (!editor || editor.document !== document) return matchCounts;
+
+  // Get active range from configuration
+  const config = vscode.workspace.getConfiguration('highlightFilters');
+  let startLine = 0;
+  let endLine = document.lineCount - 1;
+
+  if (!isFilteredView) {
+    const activeRangeId = config.get<string>('activeRangeId', 'default');
+    if (activeRangeId !== 'default') {
+      const ranges = config.get<{ id: string, start: number, end: number }[]>('ranges', []);
+      const activeRange = ranges.find(range => range.id === activeRangeId);
+      if (activeRange) {
+        startLine = Math.max(0, activeRange.start);
+        endLine = activeRange.end >= 0 ? Math.min(document.lineCount - 1, activeRange.end) : document.lineCount - 1;
+      }
+    }
+  }
+
+  console.log(`Applying highlights from line ${startLine} to ${endLine} (isFiltered: ${isFilteredView})`);
 
   // Clear all previous decorations
   activeDecorations.forEach(d => d.dispose());
@@ -35,7 +55,8 @@ export function applyHighlights(document: vscode.TextDocument, groups: FilterGro
         newDecorations.set(decorationKey, []);
       }
 
-      for (let i = 0; i < document.lineCount; i++) {
+      let filterMatchCount = 0;
+      for (let i = startLine; i <= endLine; i++) {
         const line = document.lineAt(i);
         let lineText = line.text;
         let prefixLen = 0;
@@ -58,6 +79,7 @@ export function applyHighlights(document: vscode.TextDocument, groups: FilterGro
             const startPos = line.range.start.translate(0, prefixLen + match.index);
             const endPos = line.range.start.translate(0, prefixLen + match.index + match[0].length);
             newDecorations.get(decorationKey)?.push(new vscode.Range(startPos, endPos));
+            filterMatchCount++;
           }
         } else if (!filter.regex) {
           // If not regex, find all occurrences of the pattern
@@ -67,9 +89,11 @@ export function applyHighlights(document: vscode.TextDocument, groups: FilterGro
             const endPos = line.range.start.translate(0, prefixLen + startIndex + patternToSearch.length);
             newDecorations.get(decorationKey)?.push(new vscode.Range(startPos, endPos));
             startIndex += patternToSearch.length;
+            filterMatchCount++;
           }
         }
       }
+      matchCounts.set(filter.id, filterMatchCount);
     }
   }
 
@@ -121,6 +145,8 @@ export function applyHighlights(document: vscode.TextDocument, groups: FilterGro
     activeDecorations.push(decorationType);
     editor.setDecorations(decorationType, finalRanges);
   });
+
+  return matchCounts;
 }
 
 function hexToRgba(hex: string): string {

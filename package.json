@@ -7,12 +7,12 @@
   "engines": {
     "vscode": "^1.70.0"
   },
+  "main": "./out/extension.js",
   "activationEvents": [
     "onView:filterPanel",
     "onLanguage:plaintext",
     "onLanguage:log"
   ],
-  "main": "./out/extension.js",
   "contributes": {
     "configuration": {
       "type": "object",
@@ -29,51 +29,48 @@
           "type": "boolean",
           "default": false,
           "description": "Enable/disable the filtered view showing only matched lines."
-        }
-      },
-      "definitions": {
-        "group": {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "enabled": {
-              "type": "boolean"
-            },
-            "filters": {
-              "type": "array",
-              "items": {
-                "$ref": "#/definitions/filter"
+        },
+        "highlightFilters.ranges": {
+          "type": "array",
+          "description": "List of line ranges for filtering",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique identifier for the range"
+              },
+              "name": {
+                "type": "string",
+                "description": "User-friendly name for the range"
+              },
+              "start": {
+                "type": "number",
+                "default": 0
+              },
+              "end": {
+                "type": "number",
+                "default": -1
               }
             }
           }
         },
-        "filter": {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "pattern": {
-              "type": "string"
-            },
-            "regex": {
-              "type": "boolean"
-            },
-            "foreground": {
-              "type": "string"
-            },
-            "background": {
-              "type": "string"
-            },
-            "enabled": {
-              "type": "boolean"
-            },
-            "highlightEnabled": {
-              "type": "boolean"
-            }
-          }
+        "highlightFilters.activeRangeId": {
+          "type": "string",
+          "description": "ID of the currently active range",
+          "default": "default"
+        },
+        "foreground": {
+          "type": "string"
+        },
+        "background": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "highlightEnabled": {
+          "type": "boolean"
         }
       }
     },
