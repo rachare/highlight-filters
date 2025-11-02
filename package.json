@@ -3,7 +3,11 @@
   "displayName": "Highlight Filters",
   "description": "Highlight lines in text/log files using configurable filters and groups.",
   "version": "1.0.0",
-  "publisher": "your-name",
+  "publisher": "rreddyt",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rachare/highlight-filters.git"
+  },
   "engines": {
     "vscode": "^1.70.0"
   },

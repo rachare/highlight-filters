@@ -333,6 +333,33 @@ class FilterPanelProvider implements vscode.WebviewViewProvider {
             this.batchUpdate('group');
           }
           break;
+        case 'toggleGroupCollapse':
+          {
+            const { groupName } = message.payload;
+            const group = cachedGroups.find(g => g.name === groupName);
+            if (group) {
+              group.collapsed = !group.collapsed;
+              await config.update('groups', cachedGroups, vscode.ConfigurationTarget.Global);
+              this.updateWebview(cachedGroups);
+            }
+          }
+          break;
+
+        case 'expandAllGroups':
+          {
+            cachedGroups.forEach(g => g.collapsed = false);
+            await config.update('groups', cachedGroups, vscode.ConfigurationTarget.Global);
+            this.updateWebview(cachedGroups);
+          }
+          break;
+        
+        case 'collapseAllGroups':
+          {
+            cachedGroups.forEach(g => g.collapsed = true);
+            await config.update('groups', cachedGroups, vscode.ConfigurationTarget.Global);
+            this.updateWebview(cachedGroups);
+          }
+          break;
           
         case 'updateGroupName':
           {

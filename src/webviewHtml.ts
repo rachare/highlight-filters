@@ -382,7 +382,6 @@ export function getHtml(
         const resultsInfo = document.getElementById('results-info');
         const hiddenColorInput = document.getElementById('hidden-color-input');
         let currentColorTarget = null;
-        let expandedGroups = new Set();
         // Globals used by webview for ranges and active range tracking
         let groups = [];
         let ranges = [];
@@ -407,8 +406,6 @@ export function getHtml(
           let totalFilters = 0;
           let activeFilters = 0;
           
-          if (expandedGroups.size === 0) { groups.forEach(g => expandedGroups.add(g.name)); }
-          
           groups.forEach(group => {
             const groupDiv = document.createElement('div');
             groupDiv.className = 'filter-group';
@@ -417,7 +414,7 @@ export function getHtml(
             const groupHeader = document.createElement('div');
             groupHeader.className = 'group-header';
             groupHeader.innerHTML = \`
-              <span class="group-twistie codicon codicon-chevron-right \${expandedGroups.has(group.name) ? 'expanded' : ''}"></span>
+              <span class="group-twistie codicon codicon-chevron-right \${!group.collapsed ? 'expanded' : ''}"></span>
               <input type="text" class="group-name" value="\${group.name}" readonly />
               <div class="group-controls">
                 <button class="search-btn add-filter codicon codicon-add" data-group-name="\${group.name}" title="Add Filter"></button>
@@ -428,7 +425,7 @@ export function getHtml(
             groupDiv.appendChild(groupHeader);
             
             const groupContent = document.createElement('div');
-            groupContent.className = \`group-content \${expandedGroups.has(group.name) ? 'expanded' : ''}\`;
+            groupContent.className = \`group-content \${!group.collapsed ? 'expanded' : ''}\`;
 
             group.filters.forEach(filter => {
               totalFilters++;
@@ -568,17 +565,10 @@ export function getHtml(
           groupsContainer.addEventListener('click', e => {
               const target = e.target;
               const groupHeader = target.closest('.group-header');
-              if (groupHeader && (target.closest('.group-twistie'))) {
-                  const groupName = groupHeader.closest('.filter-group').dataset.groupName;
-                  if (expandedGroups.has(groupName)) {
-                      expandedGroups.delete(groupName);
-                  } else {
-                      expandedGroups.add(groupName);
-                  }
-                  vscode.postMessage({ command: 'refreshView' });
-                  console.log('Debug info: DEAD ');
-                  console.log(target);
-                  return;
+              if (groupHeader && target.closest('.group-twistie')) {
+                const groupName = groupHeader.closest('.filter-group').dataset.groupName;
+                vscode.postMessage({ command: 'toggleGroupCollapse', payload: { groupName } });
+                return;
               }
 
               const actionTarget = target.closest('.add-filter, .toggle-group, .delete-group, .filter-color-input, .color-clear-btn, .toggle-bold, .toggle-italic, .toggle-case-sensitive, .toggle-wholeline, .toggle-regex, .toggle-filter, .delete-filter, .add-group-prompt');
@@ -743,18 +733,14 @@ export function getHtml(
           const expandAllBtn = document.getElementById('expand-all-btn');
           if (expandAllBtn) {
             expandAllBtn.addEventListener('click', () => {
-              document.querySelectorAll('.filter-group').forEach(group => {
-                expandedGroups.add(group.dataset.groupName);
-              });
-              vscode.postMessage({ command: 'refreshView' });
+              vscode.postMessage({ command: 'expandAllGroups' });
             });
           }
-          
+
           const collapseAllBtn = document.getElementById('collapse-all-btn');
           if (collapseAllBtn) {
             collapseAllBtn.addEventListener('click', () => {
-              expandedGroups.clear();
-              vscode.postMessage({ command: 'refreshView' });
+              vscode.postMessage({ command: 'collapseAllGroups' });
             });
           }
           

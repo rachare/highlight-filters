@@ -15,4 +15,5 @@ export interface FilterGroup {
   name: string;
   enabled: boolean;
   filters: Filter[];
+  collapsed?: boolean;
 }
