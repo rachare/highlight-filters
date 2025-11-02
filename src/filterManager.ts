@@ -46,7 +46,7 @@ export function getMatchCounts(document: vscode.TextDocument, groups: FilterGrou
       const activeRange = ranges.find(range => range.id === activeRangeId);
       if (activeRange) {
         startLine = Math.max(0, activeRange.start);
-        endLine = activeRange.end >= 0 ? Math.min(document.lineCount - 1, activeRange.end) : document.lineCount - 1;
+        endLine = activeRange.end >= 1 ? Math.min(document.lineCount - 1, activeRange.end-1) : document.lineCount - 1;
       }
     }
   }
@@ -120,12 +120,10 @@ export function applyHighlights(document: vscode.TextDocument, groups: FilterGro
       const activeRange = ranges.find(range => range.id === activeRangeId);
       if (activeRange) {
         startLine = Math.max(0, activeRange.start);
-        endLine = activeRange.end >= 0 ? Math.min(document.lineCount - 1, activeRange.end) : document.lineCount - 1;
+        endLine = activeRange.end >= 1 ? Math.min(document.lineCount - 1, activeRange.end-1) : document.lineCount - 1;
       }
     }
   }
-
-  console.log(`Applying highlights from line ${startLine} to ${endLine} (isFiltered: ${isFilteredView})`);
 
   // Clear all previous decorations
   activeDecorations.forEach(d => d.dispose());

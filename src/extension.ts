@@ -17,6 +17,7 @@ let highlightDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 let webviewUpdateTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  const lastViewedLine = new Map<string, number>();
   // Initialize cached config
   updateCachedConfig();
 
@@ -76,10 +77,21 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('No active editor to apply filter to.');
       return;
     }
+    // If in filtered view, capture the current line
+    if (matchedLinesViewEnabled) {
+      const line = activeEditor.selection.active.line;
+      const lineText = activeEditor.document.lineAt(line).text;
+      const match = lineText.match(/^(\d+):/);
+      if (match) {
+        lastViewedLine.set(originalUriStr, parseInt(match[1], 10) - 1);
+      }
+    }
 
     const document = activeEditor.document;
 
     if (!matchedLinesViewEnabled) {
+      const cursorLine = activeEditor.selection.active.line;
+      lastViewedLine.set(originalUriStr, cursorLine);
       // Store original content if not already stored
       if (!originalDocumentContent.has(document)) {
         originalDocumentContent.set(document, document.getText());
@@ -88,9 +100,10 @@ export function activate(context: vscode.ExtensionContext) {
       // Build matched lines within active range and groups
       const activeRange = cachedRanges.find(r => r.id === cachedActiveRangeId) || { start: 0, end: -1 };
       const startLine = Math.max(0, activeRange.start);
-      const endLine = activeRange.end >= 0 ? Math.min(document.lineCount - 1, activeRange.end) : document.lineCount - 1;
+      const endLine = activeRange.end >= 1 ? Math.min(document.lineCount - 1, activeRange.end-1) : document.lineCount - 1;
 
       const matchedLines: string[] = [];
+      const lineMapping = new Map<number, number>();
       for (let i = startLine; i <= endLine; i++) {
         const line = document.lineAt(i).text;
         let isMatched = false;
@@ -123,6 +136,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (isMatched) {
+          lineMapping.set(i, matchedLines.length);
           matchedLines.push(`${i + 1}: ${line}`);
         }
       }
@@ -144,6 +158,25 @@ export function activate(context: vscode.ExtensionContext) {
       // Update webview to reflect new match counts
       scheduleWebviewUpdate(filterPanelProvider);
 
+      // Move cursor to the nearest line
+      const originalLine = lastViewedLine.get(originalUriStr);
+      if (originalLine !== undefined) {
+        let nearestLine = -1;
+        let minDistance = Infinity;
+        for (const [key, value] of lineMapping.entries()) {
+          const distance = Math.abs(key - originalLine);
+          if (distance < minDistance) {
+            minDistance = distance;
+            nearestLine = value;
+          }
+        }
+        if (nearestLine !== -1) {
+          const position = new vscode.Position(nearestLine, 0);
+          activeEditor.selection = new vscode.Selection(position, position);
+          activeEditor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+        }
+      }
+
     } else {
       // Restore original content exactly as it was
       matchedViewActive.delete(originalUriStr);
@@ -158,7 +191,14 @@ export function activate(context: vscode.ExtensionContext) {
           editBuilder.replace(wholeRange, originalText);
         });
       }
-
+      // Go to the last viewed line
+      const line = lastViewedLine.get(originalUriStr);
+      if (line !== undefined) {
+        const position = new vscode.Position(line, 0);
+        activeEditor.selection = new vscode.Selection(position, position);
+        activeEditor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+        lastViewedLine.delete(originalUriStr);
+      }
       // Re-apply highlights to restored content
       applyHighlights(activeEditor.document, cachedGroups, false);
       
